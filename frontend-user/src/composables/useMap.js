@@ -27,10 +27,13 @@ import { shallowRef } from 'vue'
 import Map from 'ol/Map'                    // 地图主类
 import View from 'ol/View'                  // 视图控制
 import TileLayer from 'ol/layer/Tile'       // 瓦片图层
-import VectorLayer from 'ol/layer/Vector'   // 矢量图层（用于路线）
+import VectorLayer from 'ol/layer/Vector'   // 矢量图层
 import VectorSource from 'ol/source/Vector' // 矢量数据源
 import OSM from 'ol/source/OSM'             // OpenStreetMap 瓦片源
 import { fromLonLat } from 'ol/proj'        // 坐标转换：经纬度 -> 地图坐标
+import { Point } from 'ol/geom'
+import { Feature } from 'ol'
+import { Style, Circle as CircleStyle, Fill, Stroke, Text } from 'ol/style'
 import logger from '../utils/logger'
 
 // ========== 地图配置常量 ==========
@@ -49,6 +52,8 @@ export function useMap() {
   const map = shallowRef(null)
   const routeLayer = shallowRef(null)
   const markerLayer = shallowRef(null)
+  const labelMarkerLayer = shallowRef(null)
+  const labelMarkerSource = shallowRef(null)
 
   /**
    * 初始化地图
@@ -91,13 +96,22 @@ export function useMap() {
       zIndex: 20  // 确保标记显示在路线上方
     })
 
+    // ========== 创建标注点图层 ==========
+    // 用于显示用户添加的标注点
+    labelMarkerSource.value = new VectorSource()
+    labelMarkerLayer.value = new VectorLayer({
+      source: labelMarkerSource.value,
+      zIndex: 30  // 确保标注点显示在最上层
+    })
+
     // ========== 创建地图实例 ==========
     map.value = new Map({
       target: container,  // 绑定DOM容器
       layers: [
-        baseLayer,           // OSM底图
-        routeLayer.value,    // 路线图层
-        markerLayer.value    // 标记图层
+        baseLayer,              // OSM底图
+        routeLayer.value,       // 路线图层
+        markerLayer.value,      // 标记图层
+        labelMarkerLayer.value  // 标注点图层
       ],
       view: new View({
         // fromLonLat: 将经纬度(WGS84)转换为地图投影坐标(EPSG:3857)
@@ -177,14 +191,82 @@ export function useMap() {
     }
   }
 
+  const createLabelMarkerStyle = (name) => {
+    return new Style({
+      image: new CircleStyle({
+        radius: 10,
+        fill: new Fill({ color: '#6c5ce7' }),
+        stroke: new Stroke({ color: '#fff', width: 3 })
+      }),
+      text: new Text({
+        text: name,
+        offsetY: -20,
+        font: 'bold 12px sans-serif',
+        fill: new Fill({ color: '#fff' }),
+        backgroundFill: new Fill({ color: 'rgba(108, 92, 231, 0.9)' }),
+        padding: [4, 8, 4, 8]
+      })
+    })
+  }
+
+  const addLabelMarker = (id, lng, lat, name) => {
+    if (!labelMarkerSource.value) return
+    
+    const feature = new Feature({
+      geometry: new Point(fromLonLat([lng, lat]))
+    })
+    feature.setId(id)
+    feature.setStyle(createLabelMarkerStyle(name))
+    labelMarkerSource.value.addFeature(feature)
+    logger.info('useMap', '添加标注点到地图', { id, lng, lat, name })
+  }
+
+  const updateLabelMarker = (id, name) => {
+    if (!labelMarkerSource.value) return
+    
+    const feature = labelMarkerSource.value.getFeatureById(id)
+    if (feature) {
+      feature.setStyle(createLabelMarkerStyle(name))
+      logger.info('useMap', '更新标注点样式', { id, name })
+    }
+  }
+
+  const removeLabelMarker = (id) => {
+    console.log('=== useMap removeLabelMarker 被调用 ===', id)
+    if (!labelMarkerSource.value) {
+      console.log('=== labelMarkerSource 不存在 ===')
+      return
+    }
+    
+    const feature = labelMarkerSource.value.getFeatureById(id)
+    console.log('=== 找到的要素 ===', feature)
+    if (feature) {
+      labelMarkerSource.value.removeFeature(feature)
+      console.log('=== 已从地图移除标注点 ===', id)
+      logger.info('useMap', '移除标注点', { id })
+    }
+  }
+
+  const clearAllLabelMarkers = () => {
+    if (labelMarkerSource.value) {
+      labelMarkerSource.value.clear()
+      logger.info('useMap', '清除所有标注点')
+    }
+  }
+
   return {
     map,
     routeLayer,
     markerLayer,
+    labelMarkerLayer,
     initMap,
     zoomIn,
     zoomOut,
     flyTo,
-    destroy
+    destroy,
+    addLabelMarker,
+    updateLabelMarker,
+    removeLabelMarker,
+    clearAllLabelMarkers
   }
 }
