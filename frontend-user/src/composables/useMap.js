@@ -31,6 +31,9 @@ import VectorLayer from 'ol/layer/Vector'   // 矢量图层（用于路线）
 import VectorSource from 'ol/source/Vector' // 矢量数据源
 import OSM from 'ol/source/OSM'             // OpenStreetMap 瓦片源
 import { fromLonLat } from 'ol/proj'        // 坐标转换：经纬度 -> 地图坐标
+import Feature from 'ol/Feature'            // 要素类
+import Point from 'ol/geom/Point'           // 点几何
+import { Style, Icon, Text as TextStyle, Fill, Stroke } from 'ol/style' // 样式
 import logger from '../utils/logger'
 
 // ========== 地图配置常量 ==========
@@ -49,6 +52,8 @@ export function useMap() {
   const map = shallowRef(null)
   const routeLayer = shallowRef(null)
   const markerLayer = shallowRef(null)
+  const annotationLayer = shallowRef(null)
+  const annotationSource = shallowRef(null)
 
   /**
    * 初始化地图
@@ -91,13 +96,22 @@ export function useMap() {
       zIndex: 20  // 确保标记显示在路线上方
     })
 
+    // ========== 创建标注点图层 ==========
+    // 用于显示用户添加的标注点
+    annotationSource.value = new VectorSource()
+    annotationLayer.value = new VectorLayer({
+      source: annotationSource.value,
+      zIndex: 30  // 确保标注点显示在最上方
+    })
+
     // ========== 创建地图实例 ==========
     map.value = new Map({
       target: container,  // 绑定DOM容器
       layers: [
-        baseLayer,           // OSM底图
-        routeLayer.value,    // 路线图层
-        markerLayer.value    // 标记图层
+        baseLayer,              // OSM底图
+        routeLayer.value,       // 路线图层
+        markerLayer.value,      // 标记图层
+        annotationLayer.value   // 标注点图层
       ],
       view: new View({
         // fromLonLat: 将经纬度(WGS84)转换为地图投影坐标(EPSG:3857)
@@ -177,14 +191,103 @@ export function useMap() {
     }
   }
 
+  const createMarkerStyle = (name) => {
+    return new Style({
+      image: new Icon({
+        src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 32" width="24" height="32">
+            <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill="#4a9eff" stroke="#fff" stroke-width="1"/>
+            <circle cx="12" cy="12" r="5" fill="#fff"/>
+          </svg>
+        `),
+        anchor: [0.5, 1],
+        scale: 1.2
+      }),
+      text: new TextStyle({
+        text: name || '',
+        offsetY: -40,
+        fill: new Fill({ color: '#fff' }),
+        stroke: new Stroke({ color: '#1a1a2e', width: 3 }),
+        font: '12px sans-serif',
+        padding: [4, 8, 4, 8],
+        backgroundFill: new Fill({ color: 'rgba(26, 26, 46, 0.9)' }),
+        borderRadius: 4
+      })
+    })
+  }
+
+  const addAnnotation = (marker) => {
+    if (!annotationSource.value) return
+    
+    const feature = new Feature({
+      geometry: new Point(fromLonLat([marker.lng, marker.lat])),
+      id: marker.id
+    })
+    feature.setStyle(createMarkerStyle(marker.name))
+    feature.set('markerData', marker)
+    annotationSource.value.addFeature(feature)
+    logger.debug('useMap', '添加标注点到地图', marker)
+  }
+
+  const removeAnnotation = (markerId) => {
+    if (!annotationSource.value) return
+    
+    const features = annotationSource.value.getFeatures()
+    for (const feature of features) {
+      if (feature.get('id') === markerId) {
+        annotationSource.value.removeFeature(feature)
+        logger.debug('useMap', '从地图移除标注点', markerId)
+        break
+      }
+    }
+  }
+
+  const updateAnnotation = (marker) => {
+    if (!annotationSource.value) return
+    
+    const features = annotationSource.value.getFeatures()
+    for (const feature of features) {
+      if (feature.get('id') === marker.id) {
+        feature.setGeometry(new Point(fromLonLat([marker.lng, marker.lat])))
+        feature.setStyle(createMarkerStyle(marker.name))
+        feature.set('markerData', marker)
+        logger.debug('useMap', '更新地图标注点', marker)
+        break
+      }
+    }
+  }
+
+  const renderAllAnnotations = (markers) => {
+    if (!annotationSource.value) return
+    
+    annotationSource.value.clear()
+    markers.forEach(marker => {
+      addAnnotation(marker)
+    })
+    logger.info('useMap', '渲染所有标注点', { count: markers.length })
+  }
+
+  const clearAllAnnotations = () => {
+    if (annotationSource.value) {
+      annotationSource.value.clear()
+      logger.info('useMap', '清除所有标注点')
+    }
+  }
+
   return {
     map,
     routeLayer,
     markerLayer,
+    annotationLayer,
     initMap,
     zoomIn,
     zoomOut,
     flyTo,
-    destroy
+    destroy,
+    addAnnotation,
+    removeAnnotation,
+    updateAnnotation,
+    renderAllAnnotations,
+    clearAllAnnotations
   }
 }
